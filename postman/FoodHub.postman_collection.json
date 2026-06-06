@@ -1,0 +1,155 @@
+{
+  "info": {
+    "name": "FoodHub - All scenarios via API Gateway",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "gateway", "value": "http://localhost:8080" },
+    { "key": "token", "value": "YOUR_JWT_TOKEN_HERE" }
+  ],
+  "item": [
+    {
+      "name": "1. Auth - Get Token from Keycloak",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:8180/realms/foodhub/protocol/openid-connect/token",
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "grant_type", "value": "password" },
+            { "key": "client_id", "value": "foodhub-frontend" },
+            { "key": "username", "value": "customer1" },
+            { "key": "password", "value": "password" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "2. Create User (via Gateway)",
+      "request": {
+        "method": "POST",
+        "url": "{{gateway}}/api/v1/users",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"keycloakId\": \"kc-001\", \"firstName\": \"John\", \"lastName\": \"Doe\", \"email\": \"john@example.com\", \"phone\": \"+1234567890\", \"role\": \"CUSTOMER\" }"
+        }
+      }
+    },
+    {
+      "name": "3. Create Restaurant (via Gateway)",
+      "request": {
+        "method": "POST",
+        "url": "{{gateway}}/api/v1/restaurants",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"name\": \"Pizza Palace\", \"description\": \"Best pizza in town\", \"ownerId\": \"kc-001\", \"address\": \"123 Main St\", \"city\": \"Tunis\", \"deliveryFee\": 2.5, \"estimatedDeliveryTime\": 30, \"minimumOrderAmount\": 10.0 }"
+        }
+      }
+    },
+    {
+      "name": "4. Add Menu Item (via Gateway)",
+      "request": {
+        "method": "POST",
+        "url": "{{gateway}}/api/v1/restaurants/menu",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"categoryId\": 1, \"restaurantId\": 1, \"name\": \"Margherita Pizza\", \"description\": \"Classic tomato and mozzarella\", \"price\": 12.99, \"available\": true, \"preparationTime\": 20 }"
+        }
+      }
+    },
+    {
+      "name": "5. Add to Cart (via Gateway — triggers Feign to Restaurant Service)",
+      "request": {
+        "method": "POST",
+        "url": "{{gateway}}/api/v1/cart/1/items",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"menuItemId\": 1, \"quantity\": 2 }"
+        }
+      }
+    },
+    {
+      "name": "6. Place Order (via Gateway — triggers Feign to User+Restaurant, then RabbitMQ OrderCreated)",
+      "request": {
+        "method": "POST",
+        "url": "{{gateway}}/api/v1/orders/users/1",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"addressId\": 1, \"specialInstructions\": \"Extra napkins\" }"
+        }
+      }
+    },
+    {
+      "name": "7. Confirm Order (triggers RabbitMQ OrderAccepted -> Delivery Service)",
+      "request": {
+        "method": "PATCH",
+        "url": "{{gateway}}/api/v1/orders/1/status?status=CONFIRMED",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+      }
+    },
+    {
+      "name": "8. Get Delivery for Order (via Gateway — Delivery Service uses Feign to Order Service)",
+      "request": {
+        "method": "GET",
+        "url": "{{gateway}}/api/v1/delivery/order/1",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+      }
+    },
+    {
+      "name": "9. Complete Delivery (triggers RabbitMQ DeliveryCompleted)",
+      "request": {
+        "method": "PATCH",
+        "url": "{{gateway}}/api/v1/delivery/1/status?status=DELIVERED",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+      }
+    },
+    {
+      "name": "10. Rate Restaurant (triggers RabbitMQ RestaurantRated -> Restaurant Service)",
+      "request": {
+        "method": "POST",
+        "url": "{{gateway}}/api/v1/orders/1/rate",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{ \"rating\": 5 }" }
+      }
+    },
+    {
+      "name": "11. Get Recommendations (NestJS service via Gateway)",
+      "request": {
+        "method": "GET",
+        "url": "{{gateway}}/api/v1/recommendations/users/1",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+      }
+    },
+    {
+      "name": "12. Swagger UI (centralized docs)",
+      "request": {
+        "method": "GET",
+        "url": "{{gateway}}/swagger-ui.html"
+      }
+    }
+  ]
+}
+
