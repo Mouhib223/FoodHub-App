@@ -1,0 +1,35 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'eureka-server'
+	static_configs:
+	  - targets: ['eureka-server:8761']
+	metrics_path: '/actuator/prometheus'
+
+  - job_name: 'api-gateway'
+	static_configs:
+	  - targets: ['api-gateway:8080']
+	metrics_path: '/actuator/prometheus'
+
+  - job_name: 'user-service'
+	static_configs:
+	  - targets: ['user-service:8081']
+	metrics_path: '/actuator/prometheus'
+
+  - job_name: 'restaurant-service'
+	static_configs:
+	  - targets: ['restaurant-service:8082']
+	metrics_path: '/actuator/prometheus'
+
+  - job_name: 'order-service'
+	static_configs:
+	  - targets: ['order-service:8083']
+	metrics_path: '/actuator/prometheus'
+
+  - job_name: 'delivery-service'
+	static_configs:
+	  - targets: ['delivery-service:8084']
+	metrics_path: '/actuator/prometheus'
+
+

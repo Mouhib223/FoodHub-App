@@ -1,0 +1,311 @@
+version: '3.8'
+
+networks:
+  foodhub-network:
+    driver: bridge
+
+volumes:
+  mysql_users_data:
+  mysql_restaurants_data:
+  mysql_orders_data:
+  mysql_delivery_data:
+  mongodb_data:
+  keycloak_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
+
+services:
+
+  # ============== DATABASES ==============
+  mysql-users:
+    image: mysql:8.0
+    container_name: foodhub-mysql-users
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: foodhub_users
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_users_data:/var/lib/mysql
+    networks:
+      - foodhub-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql-restaurants:
+    image: mysql:8.0
+    container_name: foodhub-mysql-restaurants
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: foodhub_restaurants
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_restaurants_data:/var/lib/mysql
+    networks:
+      - foodhub-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql-orders:
+    image: mysql:8.0
+    container_name: foodhub-mysql-orders
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: foodhub_orders
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_orders_data:/var/lib/mysql
+    networks:
+      - foodhub-network
+
+  mysql-delivery:
+    image: mysql:8.0
+    container_name: foodhub-mysql-delivery
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: foodhub_delivery
+    ports:
+      - "3309:3306"
+    volumes:
+      - mysql_delivery_data:/var/lib/mysql
+    networks:
+      - foodhub-network
+
+  mongodb:
+    image: mongo:7.0
+    container_name: foodhub-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - foodhub-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============== MESSAGING ==============
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: foodhub-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - foodhub-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============== KEYCLOAK ==============
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.0
+    container_name: foodhub-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_DB: dev-mem
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin123
+      KC_HTTP_PORT: 8180
+    ports:
+      - "8180:8180"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    networks:
+      - foodhub-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8180/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============== INFRASTRUCTURE ==============
+  eureka-server:
+    build:
+      context: ../eureka-server
+      dockerfile: Dockerfile
+    container_name: foodhub-eureka
+    ports:
+      - "8761:8761"
+    networks:
+      - foodhub-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  config-server:
+    build:
+      context: ../config-server
+      dockerfile: Dockerfile
+    container_name: foodhub-config
+    ports:
+      - "8888:8888"
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://admin:admin123@eureka-server:8761/eureka/
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - foodhub-network
+
+  api-gateway:
+    build:
+      context: ../api-gateway
+      dockerfile: Dockerfile
+    container_name: foodhub-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://admin:admin123@eureka-server:8761/eureka/
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8180/realms/foodhub
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8180/realms/foodhub/protocol/openid-connect/certs
+    depends_on:
+      - eureka-server
+      - keycloak
+    networks:
+      - foodhub-network
+
+  # ============== MICROSERVICES ==============
+  user-service:
+    build:
+      context: ../user-service
+      dockerfile: Dockerfile
+    container_name: foodhub-user-service
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-users:3306/foodhub_users
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://admin:admin123@eureka-server:8761/eureka/
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8180/realms/foodhub
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8180/realms/foodhub/protocol/openid-connect/certs
+    depends_on:
+      - mysql-users
+      - eureka-server
+      - rabbitmq
+    networks:
+      - foodhub-network
+
+  restaurant-service:
+    build:
+      context: ../restaurant-service
+      dockerfile: Dockerfile
+    container_name: foodhub-restaurant-service
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-restaurants:3306/foodhub_restaurants
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://admin:admin123@eureka-server:8761/eureka/
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8180/realms/foodhub
+    depends_on:
+      - mysql-restaurants
+      - eureka-server
+      - rabbitmq
+    networks:
+      - foodhub-network
+
+  order-service:
+    build:
+      context: ../order-service
+      dockerfile: Dockerfile
+    container_name: foodhub-order-service
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-orders:3306/foodhub_orders
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://admin:admin123@eureka-server:8761/eureka/
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8180/realms/foodhub
+    depends_on:
+      - mysql-orders
+      - eureka-server
+      - rabbitmq
+      - restaurant-service
+      - user-service
+    networks:
+      - foodhub-network
+
+  delivery-service:
+    build:
+      context: ../delivery-service
+      dockerfile: Dockerfile
+    container_name: foodhub-delivery-service
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-delivery:3306/foodhub_delivery
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://admin:admin123@eureka-server:8761/eureka/
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8180/realms/foodhub
+    depends_on:
+      - mysql-delivery
+      - eureka-server
+      - rabbitmq
+      - order-service
+    networks:
+      - foodhub-network
+
+  recommendation-service:
+    build:
+      context: ../recommendation-service
+      dockerfile: Dockerfile
+    container_name: foodhub-recommendation-service
+    ports:
+      - "3000:3000"
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/foodhub_recommendations
+      RESTAURANT_SERVICE_URL: http://restaurant-service:8082
+    depends_on:
+      - mongodb
+      - restaurant-service
+    networks:
+      - foodhub-network
+
+  # ============== MONITORING ==============
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: foodhub-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - foodhub-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: foodhub-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - foodhub-network
+
